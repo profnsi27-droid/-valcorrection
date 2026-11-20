@@ -3,10 +3,10 @@
 ## Mise en route (≈ 10 min)
 1. Créez un projet Supabase (offre gratuite).
 2. **Authentication → Providers → Email** : désactivez « Allow new users to sign up ».
-3. **Authentication → Users** : créez l'unique compte `profnsi27@gmail.com`.
+3. **Authentication → Users** : créez l'unique compte `VOTRE-EMAIL`.
 4. **SQL Editor** : exécutez `supabase/schema.sql`.
 5. Secrets des fonctions :
-   `supabase secrets set AI_API_KEY=... ADMIN_EMAIL=profnsi27@gmail.com AI_PROVIDER=anthropic`
+   `supabase secrets set AI_API_KEY=... ADMIN_EMAIL=VOTRE-EMAIL AI_PROVIDER=anthropic`
    - Claude : clé créée sur console.anthropic.com (modèle par défaut : claude-haiku-5-5, le plus économique)
    - Gemini (quota gratuit permanent, lit le PDF) : `AI_PROVIDER=gemini` + clé Google AI Studio
    - Mistral / Groq / OpenRouter : `AI_PROVIDER=openai AI_BASE_URL=https://api.mistral.ai/v1 AI_MODEL=...`
@@ -21,7 +21,7 @@
 
 ## Phases 2 à 4 (livrées)
 - `supabase/functions/student` : `supabase functions deploy student --no-verify-jwt`
-- `supabase/functions/send-result` : PDF + e-mail. Créez un compte gratuit sur resend.com **avec profnsi27@gmail.com**
+- `supabase/functions/send-result` : PDF + e-mail. Créez un compte gratuit sur resend.com **avec VOTRE-EMAIL**
   (l'expéditeur de test `onboarding@resend.dev` n'envoie qu'à l'adresse du compte), puis :
   `supabase secrets set RESEND_API_KEY=...` et `supabase functions deploy send-result`
 - `student/exam.html` : page élèves (renseigner `FN`).
