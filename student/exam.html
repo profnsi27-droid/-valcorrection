@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PROFNSI — Évaluation NSI</title>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--card:#f4f5f7;--bd:#d0d4da;--ac:#2563eb}
+@media(prefers-color-scheme:dark){:root{--bg:#14161a;--fg:#e8e8e8;--card:#1d2026;--bd:#363b44;--ac:#6ea0ff}}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif}
+button{background:var(--ac);color:#fff;border:0;border-radius:6px;padding:7px 14px;cursor:pointer;font:inherit}
+button.sec{background:var(--card);color:var(--fg);border:1px solid var(--bd)}
+input,textarea{width:100%;background:var(--card);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:8px;font:inherit}
+textarea.code{font:13px ui-monospace,Consolas,monospace;min-height:140px;tab-size:4;white-space:pre}
+#join{max-width:380px;margin:8vh auto;padding:24px;display:grid;gap:10px}
+#exam{display:none;height:100%;flex-direction:column}
+header{display:flex;gap:14px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--bd)}
+header b{flex:1}#bar{height:4px;background:var(--ac);width:0}
+main{flex:1;display:flex;min-height:0}
+#left{width:50%;min-width:240px;max-width:80%;resize:horizontal;overflow:hidden;border-right:4px solid var(--bd)}
+#left iframe{width:100%;height:100%;border:0}
+#right{flex:1;overflow:auto;padding:14px;display:grid;gap:14px;align-content:start}
+.ex{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:12px;display:grid;gap:8px}
+.out{background:#0d1117;color:#c9d1d9;padding:8px;border-radius:6px;font:13px ui-monospace,monospace;white-space:pre-wrap;min-height:28px}
+.err{color:#b00020}table input{width:110px;padding:4px}figure{margin:6px 0}
+</style></head><body>
+
+<form id="join" onsubmit="return doJoin(event)">
+  <h2>PROFNSI — Évaluation NSI</h2>
+  <input id="ln" placeholder="Nom" required><input id="fn" placeholder="Prénom" required>
+  <input id="cl" placeholder="Classe (ex : Tle NSI)" required>
+  <input id="code" placeholder="Code d'accès" required style="text-transform:uppercase">
+  <button>Commencer</button><div id="jerr" class="err"></div>
+</form>
+
+<div id="exam">
+  <header><b id="title"></b><span id="save">—</span><span id="timer"></span>
+    <button class="sec" onclick="document.documentElement.requestFullscreen?.()">Plein écran</button>
+    <button onclick="doSubmit(false)">Rendre ma copie</button></header>
+  <div id="bar"></div>
+  <main><div id="left"><iframe id="pdf" title="Sujet"></iframe></div><div id="right"></div></main>
+</div>
+
+<script>
+// ⚙️ URL de votre fonction Supabase (à modifier une seule fois)
+const FN = "https://VOTRE-PROJET.supabase.co/functions/v1/student";
+let S = null, ans = {}, dirty = false, py = null, done = false;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const call = (action, body = {}) => fetch(FN, {method:"POST", headers:{"Content-Type":"application/json"},
+  body: JSON.stringify({action, token: S?.token, ...body})}).then(r => r.json());
+const ev = (type, detail) => S && !done && call("event", {type, detail}).catch(() => {});
+
+async function doJoin(e) {
+  e.preventDefault();
+  if (FN.includes("VOTRE-PROJET")) { $("jerr").textContent = "Configuration manquante : l'adresse du serveur n'est pas renseignée (voir README)."; return false; }
+  $("jerr").textContent = "Connexion…";
+  document.documentElement.requestFullscreen?.().catch(() => {});
+  let r;
+  try { r = await call("join", {last_name:$("ln").value, first_name:$("fn").value, class_name:$("cl").value, code:$("code").value}); }
+  catch { r = {error: "Serveur injoignable : vérifiez la connexion ou que la fonction « student » est déployée."}; }
+  if (r.error) { $("jerr").textContent = r.error; document.exitFullscreen?.().catch(() => {}); return false; }
+  try { localStorage.setItem("profnsi_token", r.token); } catch {}
+  start(r); return false;
+}
+
+function start(r) {
+  S = r; ans = r.answers || {};
+  if (r.locked) { document.body.innerHTML = "<p style='padding:30px'>Cette copie a déjà été rendue.</p>"; return; }
+  $("join").style.display = "none"; $("exam").style.display = "flex";
+  $("title").textContent = r.exam.title; if (r.pdf_url) $("pdf").src = r.pdf_url;
+  $("right").innerHTML = (r.exam.instructions ? `<div class="ex">${esc(r.exam.instructions)}</div>` : "") +
+    r.exam.exercises.map(renderEx).join("");
+  const end = new Date(r.started_at).getTime() + r.exam.duration_min * 60000, total = r.exam.duration_min * 60000;
+  setInterval(() => {
+    const left = end - Date.now(); if (left <= 0 && !done) return doSubmit(true);
+    const m = Math.floor(left / 60000), s = Math.floor(left / 1000) % 60;
+    $("timer").textContent = `⏱ ${m}:${String(s).padStart(2, "0")}`; $("bar").style.width = (100 * (1 - left / total)) + "%";
+  }, 1000);
+  setInterval(save, 10000);
+}
+
+function renderEx(x) {
+  const a = x.allowed || ["texte"], v = ans[x.id] || {};
+  let h = `<div class="ex" data-id="${esc(x.id)}"><b>${esc(x.title)} <small>(${x.points} pts)</small></b>`;
+  if (a.includes("python")) h += `<textarea class="code" data-k="code" spellcheck="false" onkeydown="tab(event)" placeholder="# Code Python">${esc(v.code)}</textarea>
+    <div><button class="sec" onclick="run(this)">▶ Exécuter</button> <button class="sec" onclick="reset(this)">Réinitialiser</button></div>
+    <div class="out" data-k="output">${esc(v.output)}</div>`;
+  if (a.includes("texte")) h += `<textarea data-k="texte" rows="5" placeholder="Votre réponse">${esc(v.texte)}</textarea>`;
+  if (a.includes("qcm")) h += (x.qcm_options || []).map((o, i) =>
+    `<label><input type="checkbox" style="width:auto" data-q="${i}" ${(v.qcm || []).includes(i) ? "checked" : ""}> ${esc(o)}</label>`).join("");
+  if (a.includes("image")) h += `<div data-img>${(v.images || []).map(imgHtml).join("")}</div><input type="file" accept="image/png,image/jpeg" onchange="addImg(this)">`;
+  if (a.includes("tableau")) h += `<div data-tab><table>${(v.tableau || [["", ""], ["", ""]]).map(r =>
+    `<tr>${r.map(c => `<td><input value="${esc(c)}"></td>`).join("")}</tr>`).join("")}</table>
+    <button class="sec" onclick="tabAdd(this,'r')">+ ligne</button> <button class="sec" onclick="tabAdd(this,'c')">+ colonne</button></div>`;
+  return h + "</div>";
+}
+const imgHtml = src => `<figure><img src="${src}" style="max-width:100%"><br><button class="sec" onclick="this.closest('figure').remove();dirty=true">Supprimer</button></figure>`;
+function addImg(inp) {
+  const box = inp.previousElementSibling, f = inp.files[0]; if (!f) return;
+  if (box.querySelectorAll("img").length >= 3) { alert("3 images maximum par exercice"); return; }
+  const im = new Image(); im.onload = () => {
+    const k = Math.min(1, 1000 / Math.max(im.width, im.height)), cv = document.createElement("canvas");
+    cv.width = im.width * k; cv.height = im.height * k; cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height);
+    box.insertAdjacentHTML("beforeend", imgHtml(cv.toDataURL("image/jpeg", 0.7))); dirty = true; inp.value = "";
+  }; im.src = URL.createObjectURL(f);
+}
+function tabAdd(btn, w) {
+  const t = btn.parentElement.querySelector("table"), rows = [...t.rows];
+  if (w === "r") { const r = rows[rows.length - 1].cloneNode(true); r.querySelectorAll("input").forEach(i => i.value = ""); t.append(r); }
+  else rows.forEach(r => r.insertCell().innerHTML = "<input>");
+  dirty = true;
+}
+function tab(e) { if (e.key === "Tab") { e.preventDefault(); const t = e.target, p = t.selectionStart;
+  t.setRangeText("    ", p, t.selectionEnd, "end"); } }
+
+function collect() {
+  document.querySelectorAll(".ex[data-id]").forEach(c => {
+    const o = {};
+    c.querySelectorAll("[data-k]").forEach(el => o[el.dataset.k] = el.value ?? el.textContent);
+    c.querySelectorAll(".out").forEach(el => o.output = el.textContent);
+    const q = [...c.querySelectorAll("[data-q]")]; if (q.length) o.qcm = q.filter(i => i.checked).map(i => +i.dataset.q);
+    if (c.querySelector("[data-img]")) o.images = [...c.querySelectorAll("[data-img] img")].map(i => i.src);
+    const tb = c.querySelector("[data-tab]"); if (tb) o.tableau = [...tb.querySelectorAll("tr")].map(r => [...r.querySelectorAll("input")].map(i => i.value));
+    ans[c.dataset.id] = o;
+  });
+  return ans;
+}
+async function save() {
+  if (!dirty || done) return; dirty = false;
+  const r = await call("save", {answers: collect()}).catch(() => null);
+  $("save").textContent = r?.ok ? "✓ Sauvegardé" : "⚠ Hors ligne, nouvelle tentative…"; if (!r?.ok) dirty = true;
+}
+document.addEventListener("input", () => dirty = true);
+
+async function run(btn) {
+  const c = btn.closest(".ex"), out = c.querySelector(".out"); out.textContent = "Chargement de Python…";
+  if (!py) { await new Promise(r => { const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"; s.onload = r; document.head.append(s); });
+    py = await loadPyodide(); }
+  let buf = ""; py.setStdout({batched: t => buf += t + "\n"}); py.setStderr({batched: t => buf += t + "\n"});
+  try { await py.runPythonAsync(c.querySelector(".code").value); } catch (e) { buf += String(e.message); }
+  out.textContent = buf || "(aucune sortie)"; dirty = true;
+}
+function reset(btn) { const c = btn.closest(".ex"); if (confirm("Effacer le code ?")) { c.querySelector(".code").value = ""; dirty = true; } }
+
+async function doSubmit(auto) {
+  if (!auto && !confirm("Rendre définitivement votre copie ? Vous ne pourrez plus la modifier.")) return;
+  const r = await call("submit", {answers: collect()});
+  if (r.ok) { done = true; document.exitFullscreen?.().catch(() => {});
+    document.body.innerHTML = "<p style='padding:30px'>✅ Copie rendue. Vous pouvez fermer cette page.</p>"; }
+  else alert(r.error || "Échec, réessayez");
+}
+
+// Journal anti-triche (indicatif, jamais une preuve automatique)
+document.addEventListener("visibilitychange", () => document.hidden && ev("tab_change"));
+window.addEventListener("blur", () => ev("focus_lost"));
+document.addEventListener("fullscreenchange", () => !document.fullscreenElement && ev("fullscreen_exit"));
+
+// Récupération après déconnexion / rechargement
+(async () => { let t; try { t = localStorage.getItem("profnsi_token"); } catch {}
+  if (!t) return; S = {token: t}; const r = await call("resume");
+  if (r.error) { S = null; return; } start(r); })();
+</script></body></html>
